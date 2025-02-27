@@ -15,15 +15,16 @@ import {
 import { CellSize, DAY_LABELS, 분 } from './constants.ts';
 import { Schedule } from './types.ts';
 import { fill2, parseHnM } from './utils.ts';
-import { useDndContext, useDraggable } from '@dnd-kit/core';
+import { useDraggable, useDndContext } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { ComponentProps, Fragment } from 'react';
+import { Fragment, memo, useCallback, useMemo } from 'react';
+import { useScheduleTableContext } from './ScheduleTableContext.tsx';
 
 interface Props {
   tableId: string;
-  schedules: Schedule[];
-  onScheduleTimeClick?: (timeInfo: { day: string; time: number }) => void;
-  onDeleteButtonClick?: (timeInfo: { day: string; time: number }) => void;
+  isActive?: boolean;
+  onScheduleTimeClick?: (tableId: string, timeInfo: { day: string; time: number }) => void;
+  onDeleteButtonClick?: (tableId: string, timeInfo: { day: string; time: number }) => void;
 }
 
 const TIMES = [
@@ -38,31 +39,13 @@ const TIMES = [
     .map((v) => `${parseHnM(v)}~${parseHnM(v + 50 * 분)}`),
 ] as const;
 
-const ScheduleTable = ({ tableId, schedules, onScheduleTimeClick, onDeleteButtonClick }: Props) => {
-  const getColor = (lectureId: string): string => {
-    const lectures = [...new Set(schedules.map(({ lecture }) => lecture.id))];
-    const colors = ['#fdd', '#ffd', '#dff', '#ddf', '#fdf', '#dfd'];
-    return colors[lectures.indexOf(lectureId) % colors.length];
-  };
-
-  const dndContext = useDndContext();
-
-  const getActiveTableId = () => {
-    const activeId = dndContext.active?.id;
-    if (activeId) {
-      return String(activeId).split(':')[0];
-    }
-    return null;
-  };
-
-  const activeTableId = getActiveTableId();
-
-  return (
-    <Box
-      position="relative"
-      outline={activeTableId === tableId ? '5px dashed' : undefined}
-      outlineColor="blue.300"
-    >
+const ScheduleTableGrid = memo(
+  ({
+    onScheduleTimeClick,
+  }: {
+    onScheduleTimeClick?: (timeInfo: { day: string; time: number }) => void;
+  }) => {
+    return (
       <Grid
         templateColumns={`120px repeat(${DAY_LABELS.length}, ${CellSize.WIDTH}px)`}
         templateRows={`40px repeat(${TIMES.length}, ${CellSize.HEIGHT}px)`}
@@ -111,75 +94,137 @@ const ScheduleTable = ({ tableId, schedules, onScheduleTimeClick, onDeleteButton
           </Fragment>
         ))}
       </Grid>
+    );
+  }
+);
 
-      {schedules.map((schedule, index) => (
-        <DraggableSchedule
-          key={`${schedule.lecture.title}-${index}`}
-          id={`${tableId}:${index}`}
-          data={schedule}
-          bg={getColor(schedule.lecture.id)}
-          onDeleteButtonClick={() =>
-            onDeleteButtonClick?.({
-              day: schedule.day,
-              time: schedule.range[0],
-            })
-          }
-        />
-      ))}
-    </Box>
-  );
-};
+interface DraggableScheduleProps {
+  id: string;
+  data: Schedule;
+  bg: string;
+  onDeleteButtonClick: () => void;
+}
 
-const DraggableSchedule = ({
-  id,
-  data,
-  bg,
-  onDeleteButtonClick,
-}: { id: string; data: Schedule } & ComponentProps<typeof Box> & {
-    onDeleteButtonClick: () => void;
-  }) => {
-  const { day, range, room, lecture } = data;
-  const { attributes, setNodeRef, listeners, transform } = useDraggable({ id });
-  const leftIndex = DAY_LABELS.indexOf(day as typeof DAY_LABELS[number]);
-  const topIndex = range[0] - 1;
-  const size = range.length;
+const DraggableSchedule = memo(
+  function DraggableSchedule({ id, data, bg, onDeleteButtonClick }: DraggableScheduleProps) {
+    const { day, range, room, lecture } = data;
+    const { attributes, setNodeRef, listeners, transform } = useDraggable({ id });
+    const leftIndex = DAY_LABELS.indexOf(day as (typeof DAY_LABELS)[number]);
+    const topIndex = range[0] - 1;
+    const size = range.length;
 
-  return (
-    <Popover>
-      <PopoverTrigger>
-        <Box
-          position="absolute"
-          left={`${120 + CellSize.WIDTH * leftIndex + 1}px`}
-          top={`${40 + (topIndex * CellSize.HEIGHT + 1)}px`}
-          width={CellSize.WIDTH - 1 + 'px'}
-          height={CellSize.HEIGHT * size - 1 + 'px'}
-          bg={bg}
-          p={1}
-          boxSizing="border-box"
-          cursor="pointer"
-          ref={setNodeRef}
-          transform={CSS.Translate.toString(transform)}
-          {...listeners}
-          {...attributes}
-        >
-          <Text fontSize="sm" fontWeight="bold">
-            {lecture.title}
-          </Text>
-          <Text fontSize="xs">{room}</Text>
-        </Box>
-      </PopoverTrigger>
-      <PopoverContent onClick={(event) => event.stopPropagation()}>
-        <PopoverArrow />
-        <PopoverCloseButton />
-        <PopoverBody>
-          <Text>강의를 삭제하시겠습니까?</Text>
-          <Button colorScheme="red" size="xs" onClick={onDeleteButtonClick}>
-            삭제
-          </Button>
-        </PopoverBody>
-      </PopoverContent>
-    </Popover>
-  );
-};
+    return (
+      <Popover>
+        <PopoverTrigger>
+          <Box
+            position="absolute"
+            left={`${120 + CellSize.WIDTH * leftIndex + 1}px`}
+            top={`${40 + (topIndex * CellSize.HEIGHT + 1)}px`}
+            width={CellSize.WIDTH - 1 + 'px'}
+            height={CellSize.HEIGHT * size - 1 + 'px'}
+            bg={bg}
+            p={1}
+            boxSizing="border-box"
+            cursor="pointer"
+            ref={setNodeRef}
+            transform={CSS.Translate.toString(transform)}
+            {...listeners}
+            {...attributes}
+          >
+            <Text fontSize="sm" fontWeight="bold">
+              {lecture.title}
+            </Text>
+            <Text fontSize="xs">{room}</Text>
+          </Box>
+        </PopoverTrigger>
+        <PopoverContent onClick={(event) => event.stopPropagation()}>
+          <PopoverArrow />
+          <PopoverCloseButton />
+          <PopoverBody>
+            <Text>강의를 삭제하시겠습니까?</Text>
+            <Button colorScheme="red" size="xs" onClick={onDeleteButtonClick}>
+              삭제
+            </Button>
+          </PopoverBody>
+        </PopoverContent>
+      </Popover>
+    );
+  },
+  (prevProps, nextProps) => {
+    return prevProps.id === nextProps.id && prevProps.data === nextProps.data;
+  }
+);
+
+const ScheduleTable = memo(
+  ({
+    tableId,
+    isActive: activeOutline = false,
+    onScheduleTimeClick,
+    onDeleteButtonClick,
+  }: Props) => {
+    const { schedules } = useScheduleTableContext();
+    const { active } = useDndContext();
+    const draggedId = active ? String(active.id) : null;
+
+    const lectureColorMap = useMemo(() => {
+      const lectures = [...new Set(schedules.map(({ lecture }) => lecture.id))];
+      const colors = ['#fdd', '#ffd', '#dff', '#ddf', '#fdf', '#dfd'];
+      return new Map(
+        lectures.map((lectureId, index) => [lectureId, colors[index % colors.length]])
+      );
+    }, [schedules]);
+
+    const getColor = useCallback(
+      (lectureId: string): string => {
+        return lectureColorMap.get(lectureId) || '#ddd';
+      },
+      [lectureColorMap]
+    );
+
+    const deleteButtonHandlers = useMemo(() => {
+      return schedules.map(
+        (schedule) => () =>
+          onDeleteButtonClick?.(tableId, {
+            day: schedule.day,
+            time: schedule.range[0],
+          })
+      );
+    }, [onDeleteButtonClick, schedules, tableId]);
+
+    const renderedSchedules = useMemo(() => {
+      return schedules.map((schedule, index) => {
+        const scheduleId = `${tableId}:${index}`;
+
+        return (
+          <DraggableSchedule
+            key={`${tableId}:${schedule.lecture.id}:${index}`}
+            id={scheduleId}
+            data={schedule}
+            bg={getColor(schedule.lecture.id)}
+            onDeleteButtonClick={deleteButtonHandlers[index]}
+          />
+        );
+      });
+    }, [schedules, getColor, deleteButtonHandlers, tableId, draggedId]);
+
+    const handleScheduleTimeClick = useCallback(
+      (timeInfo: { day: string; time: number }) => {
+        onScheduleTimeClick?.(tableId, timeInfo);
+      },
+      [onScheduleTimeClick, tableId]
+    );
+
+    return (
+      <Box
+        position="relative"
+        outline={activeOutline ? '5px dashed' : undefined}
+        outlineColor="blue.300"
+      >
+        <ScheduleTableGrid onScheduleTimeClick={handleScheduleTimeClick} />
+        {renderedSchedules}
+      </Box>
+    );
+  }
+);
 
 export default ScheduleTable;
